@@ -1,0 +1,50 @@
+name: vexor
+
+# All-in-one Vexor stack in a single systemd container.
+# The same RPMs as the Rocky 10 install, running inside the container.
+#
+#   cp .env.example .env      # then edit if needed
+#   docker compose up -d
+#   docker compose logs -f vexor
+#
+# Initial admin credentials are written to /etc/vexor/.initial-admin inside the
+# container (persisted in the `vexoretc` volume):
+#   docker compose exec vexor cat /etc/vexor/.initial-admin
+
+services:
+  vexor:
+    image: ghcr.io/sayonarase/vexor:latest
+    build:
+      context: ./app
+    container_name: vexor
+    hostname: vexor
+    env_file:
+      - .env
+    # systemd needs to run as PID 1 inside the container.
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    cap_add:
+      - NET_RAW          # ICMP checks (check_icmp / ping)
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - mysql:/var/lib/mysql
+      - influxdb:/var/lib/influxdb
+      - naemon:/var/lib/naemon
+      - vexor:/var/lib/vexor
+      - vexoretc:/etc/vexor
+      - keycloak:/opt/keycloak/data
+    restart: unless-stopped
+
+volumes:
+  mysql:
+  influxdb:
+  naemon:
+  vexor:
+  vexoretc:
+  keycloak:

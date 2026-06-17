@@ -1,0 +1,16 @@
+[Unit]
+Description=Vexor first-boot setup (containerized)
+After=mariadb.service influxdb.service valkey.service keycloak.service network-online.target
+Wants=network-online.target
+ConditionPathExists=!/etc/vexor/.docker-firstboot-done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# systemd oneshot units start with an empty environment; vexor-setup reads
+# $HOME (influx CLI config) under `set -u`, so HOME must be defined here.
+Environment=HOME=/root
+ExecStart=/usr/local/sbin/vexor-firstboot.sh
+
+[Install]
+WantedBy=multi-user.target

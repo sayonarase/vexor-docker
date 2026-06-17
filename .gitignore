@@ -1,0 +1,7 @@
+# Local env file (may contain instance-specific values)
+.env
+
+# Editor / OS noise
+*.swp
+.DS_Store
+Thumbs.db
