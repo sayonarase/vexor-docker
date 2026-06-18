@@ -18,7 +18,7 @@ STOPSIGNAL SIGRTMIN+3
 # vexor-release configures the yum repo + imports the GPG key.
 # valkey (Redis-compatible cache) is an optional companion of vexor-api; we add
 # it explicitly to match the production install.
-ARG VEXOR_RELEASE_RPM="https://sayonara.dyndns.org:8443/10/noarch/vexor-release-0.1.0-4.el10.noarch.rpm"
+ARG VEXOR_RELEASE_RPM="https://repo.vexormon.com/vexor-release-latest-el10.rpm"
 RUN dnf -y install "$VEXOR_RELEASE_RPM" \
  && dnf -y install vexor-server valkey sudo \
  && dnf -y clean all \
