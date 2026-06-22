@@ -20,7 +20,7 @@ STOPSIGNAL SIGRTMIN+3
 # it explicitly to match the production install.
 ARG VEXOR_RELEASE_RPM="https://repo.vexormon.com/vexor-release-latest-el10.rpm"
 RUN dnf -y install "$VEXOR_RELEASE_RPM" \
- && dnf -y install vexor-server valkey sudo \
+ && dnf -y install vexor-server valkey sudo curl \
  && dnf -y clean all \
  && rm -rf /var/cache/dnf
 
@@ -76,5 +76,9 @@ EXPOSE 80 443
 # Persist state across container re-creation (see docker-compose.yml).
 VOLUME ["/var/lib/mysql", "/var/lib/influxdb", "/var/lib/naemon", \
         "/var/lib/vexor", "/etc/vexor", "/opt/keycloak/data"]
+
+# Readiness probe: vexor-api /healthz returns 503 when the database is down.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --retries=5 \
+  CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
 
 CMD ["/sbin/init"]
