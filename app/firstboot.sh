@@ -52,12 +52,38 @@ ensure_runtime_env() {
     chmod 600 "$ENVF"
 }
 
+# --- Ensure Keycloak's Postgres DB is initialized + the realm is seeded -------
+# PostgreSQL data now lives in a persisted volume (/var/lib/pgsql), but the
+# container only enables/initializes postgres + seeds the Keycloak realm via
+# vexor-setup, which is skipped on recreate. Initialize postgres (idempotent)
+# and reseed the realm if it is missing (e.g. first boot on a fresh pg volume),
+# so authentication survives image upgrades.
+ensure_keycloak_db() {
+    [ -x /usr/libexec/vexor/setup-postgres ] && /usr/libexec/vexor/setup-postgres >/dev/null 2>&1 || true
+    systemctl enable --now postgresql >/dev/null 2>&1 || true
+    systemctl enable --now keycloak   >/dev/null 2>&1 || true
+    [ -f /etc/vexor/keycloak.env ] || return 0
+    local code=000 i
+    for i in $(seq 1 45); do
+        code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8180/auth/realms/master/.well-known/openid-configuration 2>/dev/null || echo 000)
+        [ "$code" = "200" ] && break
+        sleep 2
+    done
+    code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8180/auth/realms/vexor/.well-known/openid-configuration 2>/dev/null || echo 000)
+    if [ "$code" != "200" ]; then
+        echo "[vexor-firstboot] Keycloak realm 'vexor' missing (code=$code); reseeding via vexor-setup"
+        rm -f /etc/vexor/.kc_realm_seeded
+        vexor-setup --non-interactive || true
+    fi
+}
+
 
 SENTINEL=/etc/vexor/.docker-firstboot-done
 mkdir -p /etc/vexor
 
 # Always self-heal ephemeral runtime config (survives image upgrades).
 ensure_runtime_env
+ensure_keycloak_db
 
 # --- Register the operator's external URL with Keycloak ----------------------
 # vexor-setup only registers internal hostnames/IPs (vexor, localhost, the

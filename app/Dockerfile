@@ -47,7 +47,7 @@ RUN sed -i '/location \/auth\//,/^    }/{ \
 # RPM %post presets are skipped for the same reason — so we wire the wants
 # symlinks up by hand. All these units are WantedBy=multi-user.target.
 RUN mkdir -p /etc/systemd/system/multi-user.target.wants \
- && for u in mariadb influxdb valkey keycloak nginx naemon vexor-api vexor-vector; do \
+ && for u in mariadb postgresql influxdb valkey keycloak nginx naemon vexor-api vexor-vector; do \
       if [ -f "/usr/lib/systemd/system/$u.service" ]; then \
         ln -sf "/usr/lib/systemd/system/$u.service" \
                "/etc/systemd/system/multi-user.target.wants/$u.service"; \

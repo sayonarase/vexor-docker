@@ -39,6 +39,7 @@ services:
       - vexor:/var/lib/vexor
       - vexoretc:/etc/vexor
       - keycloak:/opt/keycloak/data
+      - pgsql:/var/lib/pgsql
     restart: unless-stopped
 
 volumes:
@@ -48,3 +49,4 @@ volumes:
   vexor:
   vexoretc:
   keycloak:
+  pgsql:
