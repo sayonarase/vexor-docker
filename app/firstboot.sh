@@ -109,6 +109,109 @@ ensure_keycloak_db() {
 }
 
 
+# --- Restore Naemon configs from the LKG mirror after a container recreate ----
+# /etc/naemon (incl. the vexor-generated host/service .cfg files) is NOT a
+# persisted volume, so a `docker compose pull && up -d` recreate wipes it. The
+# DB still holds the hosts/services and vexor-api keeps a last-known-good mirror
+# under /var/lib/vexor/naemon-lkg (which IS persisted). naemon's boot guard only
+# restores the LKG when `naemon -v` FAILS, but an empty config dir verifies fine
+# (0 objects), so the monitor would silently come up with no hosts/services.
+# Detect that case and restore the persisted snapshot, then reload naemon.
+ensure_naemon_configs() {
+    local LIVE=/etc/naemon/vexor
+    local TREE=/var/lib/vexor/naemon-lkg/tree
+    local nlive nlkg
+    nlive=$(find "$LIVE/hosts" -name '*.cfg' 2>/dev/null | wc -l)
+    nlkg=$(find "$TREE$LIVE/hosts" -name '*.cfg' 2>/dev/null | wc -l)
+    # Only act when the live dir is empty but the LKG mirror has a snapshot.
+    if [ "$nlive" -gt 0 ] || [ "$nlkg" -eq 0 ]; then
+        return 0
+    fi
+    echo "[vexor-firstboot] restoring $nlkg Naemon host configs from LKG mirror (live dir empty after recreate)"
+    mkdir -p "$LIVE"/hosts "$LIVE"/services "$LIVE"/commands "$LIVE"/templates
+    local sub f
+    for sub in hosts services commands templates; do
+        [ -d "$TREE$LIVE/$sub" ] && cp -f "$TREE$LIVE/$sub"/*.cfg "$LIVE/$sub"/ 2>/dev/null || true
+    done
+    for f in _servicedeps.cfg op5-commands.cfg; do
+        [ -f "$TREE$LIVE/$f" ] && cp -f "$TREE$LIVE/$f" "$LIVE/$f" 2>/dev/null || true
+    done
+    [ -f "$TREE/etc/naemon/conf.d/vexor-custom-commands.cfg" ] && \
+        cp -f "$TREE/etc/naemon/conf.d/vexor-custom-commands.cfg" /etc/naemon/conf.d/ 2>/dev/null || true
+    [ -f "$TREE/etc/naemon/conf.d/vexor_timeperiods.cfg" ] && \
+        cp -f "$TREE/etc/naemon/conf.d/vexor_timeperiods.cfg" /etc/naemon/conf.d/ 2>/dev/null || true
+    chown -R vexor:naemon "$LIVE" 2>/dev/null || true
+    systemctl reload naemon 2>/dev/null || systemctl restart naemon 2>/dev/null || true
+}
+
+# --- Provision the public-demo account + login hint (VEXOR_DEMO_MODE only) -----
+# The Keycloak realm lives in Postgres (persisted volume), but a forced realm
+# reseed drops the read-only `demo` user and the login-page credential hint.
+# When the operator opts in via VEXOR_DEMO_MODE=1 (docker-compose .env), make
+# both idempotent so the public demo keeps working across rebuilds/reseeds.
+ensure_demo_account() {
+    local DEMO
+    DEMO=$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^VEXOR_DEMO_MODE=//p' | head -1) || true
+    case "${DEMO,,}" in 1|true|yes|on) ;; *) return 0 ;; esac
+    [ -f /etc/vexor/keycloak.env ] || return 0
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8180/auth/realms/vexor/.well-known/openid-configuration 2>/dev/null || echo 000)
+    [ "$code" = "200" ] || return 0
+    echo "[vexor-firstboot] ensuring public demo account + login hint (VEXOR_DEMO_MODE)"
+    python3 - <<'PYEOF' || true
+import json, urllib.request, urllib.parse, urllib.error
+BASE = "http://127.0.0.1:8180/auth"
+def req(method, path, token=None, data=None, form=False):
+    headers = {}; body = None
+    if data is not None:
+        if form:
+            body = urllib.parse.urlencode(data).encode(); headers["Content-Type"] = "application/x-www-form-urlencoded"
+        else:
+            body = json.dumps(data).encode(); headers["Content-Type"] = "application/json"
+    if token: headers["Authorization"] = "Bearer " + token
+    r = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
+    try:
+        resp = urllib.request.urlopen(r); return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+kc = {}
+for l in open("/etc/vexor/keycloak.env"):
+    l = l.strip()
+    if "=" in l and not l.startswith("#"):
+        k, v = l.split("=", 1); kc[k] = v
+try:
+    tok = json.loads(req("POST", "/realms/master/protocol/openid-connect/token", form=True, data={
+        "grant_type": "password", "client_id": "admin-cli",
+        "username": kc["KC_BOOTSTRAP_ADMIN_USERNAME"], "password": kc["KC_BOOTSTRAP_ADMIN_PASSWORD"]})[1])["access_token"]
+except Exception as e:
+    print("demo-account: admin auth failed:", e); raise SystemExit(0)
+# login-page hint (theme uppercases #kc-header-wrapper -> override text-transform)
+hint = ('<span style="text-transform:none;display:block;text-align:center;line-height:1.5">'
+        '<b>Vexor Monitoring &mdash; Live Demo</b><br>'
+        '<span style="font-size:13px;color:#888">Sign in with <b>demo</b> / <b>demo</b></span></span>')
+print("realm:", req("PUT", "/admin/realms/vexor", token=tok, data={"realm": "vexor", "displayName": "Vexor", "displayNameHtml": hint})[0])
+users = json.loads(req("GET", "/admin/realms/vexor/users?username=demo&exact=true", token=tok)[1])
+if users:
+    uid = users[0]["id"]
+else:
+    req("POST", "/admin/realms/vexor/users", token=tok, data={"username": "demo", "enabled": True,
+        "emailVerified": True, "email": "demo@vexormon.com", "firstName": "Demo", "lastName": "User"})
+    uid = json.loads(req("GET", "/admin/realms/vexor/users?username=demo&exact=true", token=tok)[1])[0]["id"]
+print("password:", req("PUT", "/admin/realms/vexor/users/%s/reset-password" % uid, token=tok,
+    data={"type": "password", "value": "demo", "temporary": False})[0])
+have = {r["name"] for r in json.loads(req("GET", "/admin/realms/vexor/users/%s/role-mappings/realm" % uid, token=tok)[1])}
+for bad in ("vexor-admin", "vexor-operator"):
+    if bad in have:
+        r = json.loads(req("GET", "/admin/realms/vexor/roles/%s" % bad, token=tok)[1])
+        req("DELETE", "/admin/realms/vexor/users/%s/role-mappings/realm" % uid, token=tok, data=[{"id": r["id"], "name": r["name"]}])
+if "vexor-viewer" not in have:
+    viewer = json.loads(req("GET", "/admin/realms/vexor/roles/vexor-viewer", token=tok)[1])
+    print("viewer:", req("POST", "/admin/realms/vexor/users/%s/role-mappings/realm" % uid, token=tok,
+        data=[{"id": viewer["id"], "name": viewer["name"]}])[0])
+print("demo-account: done")
+PYEOF
+}
+
 SENTINEL=/etc/vexor/.docker-firstboot-done
 mkdir -p /etc/vexor
 
@@ -116,6 +219,8 @@ mkdir -p /etc/vexor
 harden_network_failfast
 ensure_runtime_env
 ensure_keycloak_db
+ensure_naemon_configs
+ensure_demo_account
 
 # --- Register the operator's external URL with Keycloak ----------------------
 # vexor-setup only registers internal hostnames/IPs (vexor, localhost, the
