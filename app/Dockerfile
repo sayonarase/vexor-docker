@@ -54,6 +54,19 @@ RUN mkdir -p /etc/systemd/system/multi-user.target.wants \
       fi; \
     done
 
+# --- Let vexor-api reach the Naemon livestatus socket ------------------------
+# vexor-api runs as the `vexor` user and talks to Naemon over the unix socket
+# /var/lib/naemon/livestatus.sock, owned naemon:naemon mode 0660. vexor-setup
+# adds `vexor` to the `naemon` group, but on a container *recreate* the firstboot
+# sentinel (in the persisted /etc/vexor volume) skips that setup while /etc/group
+# is reset from the image -- so `vexor` silently loses the naemon group and every
+# livestatus-backed endpoint (status/services, summary, host/service state) starts
+# returning 500 (Permission denied on the socket). Pin the group on the unit via a
+# drop-in: systemd applies it at every start, independent of /etc/group / ordering.
+RUN mkdir -p /etc/systemd/system/vexor-api.service.d \
+ && printf '[Service]\nSupplementaryGroups=naemon\n' \
+      > /etc/systemd/system/vexor-api.service.d/10-naemon-group.conf
+
 # --- First-boot bootstrap: runs `vexor-setup` exactly once -------------------
 COPY firstboot.sh /usr/local/sbin/vexor-firstboot.sh
 COPY vexor-firstboot.service /etc/systemd/system/vexor-firstboot.service
