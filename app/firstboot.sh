@@ -56,11 +56,11 @@ ensure_runtime_env() {
     . /etc/vexor/db.env
     local SKF=/etc/vexor/secret_key
     if [ ! -s "$SKF" ]; then
-        tr -dc 'A-Za-z0-9' </dev/urandom | head -c48 > "$SKF"
+        tr -dc 'A-Za-z0-9' </dev/urandom | head -c48 > "$SKF" || true
         chmod 640 "$SKF"; chgrp vexor "$SKF" 2>/dev/null || true
     fi
     local SK; SK=$(cat "$SKF")
-    local PUB; PUB=$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^VEXOR_PUBLIC_URL=//p' | head -1)
+    local PUB; PUB=$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^VEXOR_PUBLIC_URL=//p' | head -1) || true
     local CORS="${PUB:-https://localhost}"; CORS="${CORS%/}"
     sed -e "s|__DB_PASSWORD__|${VEXOR_DB_PASSWORD}|g" \
         -e "s|__SECRET_KEY__|${SK}|g" \
@@ -143,7 +143,7 @@ register_public_url() {
         return 0
     fi
     local id
-    id=$($KC get clients -r vexor -q clientId=vexor-ui --fields id 2>/dev/null | grep -oE '[0-9a-f-]{36}' | head -1)
+    id=$($KC get clients -r vexor -q clientId=vexor-ui --fields id 2>/dev/null | grep -oE '[0-9a-f-]{36}' | head -1) || true
     if [ -z "$id" ]; then
         echo "[vexor-firstboot] WARN: vexor-ui client not found; skipping redirect-URI registration"
         return 0
@@ -168,7 +168,7 @@ PY
 
 # systemd oneshot units start with an empty environment, so read the value the
 # operator set in docker-compose (.env) straight from PID 1's (systemd's) env.
-PUBLIC_URL=$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^VEXOR_PUBLIC_URL=//p' | head -1)
+PUBLIC_URL=$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^VEXOR_PUBLIC_URL=//p' | head -1) || true
 
 if [ -f "$SENTINEL" ]; then
     echo "[vexor-firstboot] setup already completed; re-checking external URL only."
