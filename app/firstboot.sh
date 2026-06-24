@@ -11,6 +11,24 @@ set -euo pipefail
 # `set -u`. Define it defensively so the script works regardless of caller.
 export HOME="${HOME:-/root}"
 
+# --- Make optional package-install steps fail fast on locked-down hosts -------
+# Demo hosts often block external package mirrors (EPEL, InfluxData, Rocky).
+# vexor-setup runs optional `dnf install` / `pip install` steps (polkit,
+# nagios-plugins, impacket, jsonpath-ng) that would otherwise hang for minutes
+# on metadata/PyPI timeouts before their `|| true` fallbacks kick in. Disable
+# the external mirror repos at runtime (the image already bakes the packages it
+# needs; updates ship as new images, not in-container dnf) and cap pip waits so
+# those steps fail in seconds. Idempotent; re-applied every boot.
+harden_network_failfast() {
+    for f in /etc/yum.repos.d/*.repo; do
+        case "$f" in
+            *vexor*) ;;
+            *) sed -i 's/^enabled=1/enabled=0/' "$f" 2>/dev/null || true ;;
+        esac
+    done
+    export PIP_DEFAULT_TIMEOUT=5 PIP_RETRIES=0 PIP_NO_INPUT=1
+}
+
 # --- Self-heal ephemeral runtime config on EVERY boot ------------------------
 # /opt/vexor/api/.env and /var/backups live in the container's writable layer
 # (NOT in a persisted volume). When the container is recreated on a newer image
@@ -60,6 +78,19 @@ ensure_runtime_env() {
 # so authentication survives image upgrades.
 ensure_keycloak_db() {
     [ -x /usr/libexec/vexor/setup-postgres ] && /usr/libexec/vexor/setup-postgres >/dev/null 2>&1 || true
+    # Force-align the keycloak Postgres role password with the persisted
+    # /etc/vexor/keycloak.env value. On a fresh pg volume the role is recreated
+    # and its password can diverge from the persisted KC_DB_PASSWORD, breaking
+    # Keycloak's DB login ("password authentication failed for user keycloak").
+    if [ -f /etc/vexor/keycloak.env ]; then
+        local KP
+        KP=$(grep '^KC_DB_PASSWORD=' /etc/vexor/keycloak.env | cut -d= -f2-)
+        if [ -n "$KP" ]; then
+            sudo -u postgres psql -tAc "ALTER ROLE keycloak WITH PASSWORD '$KP'" >/dev/null 2>&1 || true
+            [ -f /opt/keycloak/conf/keycloak.conf ] && \
+                sed -i "s|^db-password=.*|db-password=$KP|" /opt/keycloak/conf/keycloak.conf 2>/dev/null || true
+        fi
+    fi
     systemctl enable --now postgresql >/dev/null 2>&1 || true
     systemctl enable --now keycloak   >/dev/null 2>&1 || true
     [ -f /etc/vexor/keycloak.env ] || return 0
@@ -82,6 +113,7 @@ SENTINEL=/etc/vexor/.docker-firstboot-done
 mkdir -p /etc/vexor
 
 # Always self-heal ephemeral runtime config (survives image upgrades).
+harden_network_failfast
 ensure_runtime_env
 ensure_keycloak_db
 

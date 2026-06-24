@@ -2,7 +2,6 @@
 Description=Vexor first-boot setup (containerized)
 After=mariadb.service influxdb.service valkey.service keycloak.service network-online.target
 Wants=network-online.target
-Before=vexor-api.service
 
 [Service]
 Type=oneshot

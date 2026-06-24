@@ -20,7 +20,7 @@ STOPSIGNAL SIGRTMIN+3
 # it explicitly to match the production install.
 ARG VEXOR_RELEASE_RPM="https://repo.vexormon.com/vexor-release-latest-el10.rpm"
 RUN dnf -y install "$VEXOR_RELEASE_RPM" \
- && dnf -y install vexor-server valkey sudo curl \
+ && dnf -y install vexor-server valkey sudo curl polkit nagios-plugins-all \
  && dnf -y clean all \
  && rm -rf /var/cache/dnf
 
