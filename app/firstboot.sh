@@ -14,6 +14,50 @@ export HOME="${HOME:-/root}"
 SENTINEL=/etc/vexor/.docker-firstboot-done
 mkdir -p /etc/vexor
 
+# Always self-heal ephemeral runtime config (survives image upgrades).
+ensure_runtime_env
+
+# --- Self-heal ephemeral runtime config on EVERY boot ------------------------
+# /opt/vexor/api/.env and /var/backups live in the container's writable layer
+# (NOT in a persisted volume). When the container is recreated on a newer image
+# (docker compose pull && up -d), they are lost, while the firstboot sentinel in
+# the /etc/vexor volume makes vexor-setup skip regenerating them -> vexor-api
+# fails (missing DATABASE_URL/SECRET_KEY, or ReadWritePaths=/var/backups mount
+# error). Rebuild them idempotently from the persisted /etc/vexor secrets so the
+# stack survives image upgrades. SECRET_KEY is persisted in /etc/vexor (volume)
+# so tokens stay valid across recreations.
+ensure_runtime_env() {
+    # 1) backup target dir referenced by vexor-api.service ReadWritePaths
+    mkdir -p /var/backups/vexor/keycloak
+    chown -R vexor:vexor /var/backups 2>/dev/null || true
+    chmod 0750 /var/backups /var/backups/vexor 2>/dev/null || true
+
+    # 2) /opt/vexor/api/.env — regenerate if missing or incomplete
+    local ENVF=/opt/vexor/api/.env
+    local TPL=/opt/vexor/api/.env.template
+    [ -f /etc/vexor/db.env ] || return 0
+    [ -f "$TPL" ] || return 0
+    if [ -f "$ENVF" ] && grep -q '^DATABASE_URL=' "$ENVF" && grep -q '^SECRET_KEY=' "$ENVF"; then
+        return 0
+    fi
+    echo "[vexor-firstboot] regenerating $ENVF from persisted secrets"
+    . /etc/vexor/db.env
+    local SKF=/etc/vexor/secret_key
+    if [ ! -s "$SKF" ]; then
+        tr -dc 'A-Za-z0-9' </dev/urandom | head -c48 > "$SKF"
+        chmod 640 "$SKF"; chgrp vexor "$SKF" 2>/dev/null || true
+    fi
+    local SK; SK=$(cat "$SKF")
+    local PUB; PUB=$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^VEXOR_PUBLIC_URL=//p' | head -1)
+    local CORS="${PUB:-https://localhost}"; CORS="${CORS%/}"
+    sed -e "s|__DB_PASSWORD__|${VEXOR_DB_PASSWORD}|g" \
+        -e "s|__SECRET_KEY__|${SK}|g" \
+        -e "s|__CORS_ORIGINS__|${CORS}|g" \
+        "$TPL" > "$ENVF"
+    chown vexor:vexor "$ENVF" 2>/dev/null || true
+    chmod 600 "$ENVF"
+}
+
 # --- Register the operator's external URL with Keycloak ----------------------
 # vexor-setup only registers internal hostnames/IPs (vexor, localhost, the
 # container IP) as valid vexor-ui redirect URIs. When testers reach the
