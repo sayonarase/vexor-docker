@@ -11,12 +11,6 @@ set -euo pipefail
 # `set -u`. Define it defensively so the script works regardless of caller.
 export HOME="${HOME:-/root}"
 
-SENTINEL=/etc/vexor/.docker-firstboot-done
-mkdir -p /etc/vexor
-
-# Always self-heal ephemeral runtime config (survives image upgrades).
-ensure_runtime_env
-
 # --- Self-heal ephemeral runtime config on EVERY boot ------------------------
 # /opt/vexor/api/.env and /var/backups live in the container's writable layer
 # (NOT in a persisted volume). When the container is recreated on a newer image
@@ -57,6 +51,13 @@ ensure_runtime_env() {
     chown vexor:vexor "$ENVF" 2>/dev/null || true
     chmod 600 "$ENVF"
 }
+
+
+SENTINEL=/etc/vexor/.docker-firstboot-done
+mkdir -p /etc/vexor
+
+# Always self-heal ephemeral runtime config (survives image upgrades).
+ensure_runtime_env
 
 # --- Register the operator's external URL with Keycloak ----------------------
 # vexor-setup only registers internal hostnames/IPs (vexor, localhost, the
