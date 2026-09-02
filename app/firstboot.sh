@@ -144,6 +144,58 @@ ensure_naemon_configs() {
     systemctl reload naemon 2>/dev/null || systemctl restart naemon 2>/dev/null || true
 }
 
+# --- Replay the Vector 0.57 config migration + start the log pipeline ---------
+# vexor-vector.spec %post performs this migration correctly and idempotently,
+# but it runs at IMAGE BUILD time against the image's /etc/vexor. In the demo
+# /etc/vexor is a named volume, so on every recreate the volume shadows that
+# layer and the container comes back with the pre-0.57 config: Vector then dies
+# with "invalid uri character" and the log pipeline is silently dead.
+# Replay the same two idempotent edits against the volume, then make sure the
+# four pipeline units are actually enabled (unit enablement lives in /etc, which
+# is likewise not persisted for these paths).
+ensure_log_pipeline() {
+    local ENVF=/etc/vexor/logs.env
+    local CFG=/etc/vexor/logs/vector.toml
+    local changed=0
+
+    if [ -f "$ENVF" ] && ! grep -q '^VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=' "$ENVF"; then
+        printf '\n# Vector 0.57 made ${VAR} interpolation opt-in; vector.toml resolves\n# its endpoint from VEXOR_LOGS_URL.\nVECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true\n' >> "$ENVF"
+        echo "[vexor-firstboot] logs.env: enabled Vector env-var interpolation"
+        changed=1
+    fi
+
+    if [ -f "$CFG" ] && grep -q '{{' "$CFG" \
+       && ! grep -q 'dangerously_allow_unconfined_template_resolution' "$CFG"; then
+        # Appending lands the key in the file's LAST table, so only write it when
+        # that table really is the sink -- otherwise say so rather than silently
+        # corrupting another component.
+        local LAST_TABLE
+        LAST_TABLE=$(grep -o '^\[[^]]*\]' "$CFG" | tail -1)
+        if [ "$LAST_TABLE" = "[sinks.victorialogs]" ]; then
+            printf '\n# Vector 0.57 template confinement; see vectordotdev/vector #25898.\ndangerously_allow_unconfined_template_resolution = true\n' >> "$CFG"
+            echo "[vexor-firstboot] vector.toml: allowed unconfined template resolution"
+            changed=1
+        else
+            echo "[vexor-firstboot] WARNING: $CFG last table is $LAST_TABLE, not the sink; skipping" >&2
+        fi
+    fi
+
+    local u
+    for u in vexor-vector.service vexor-victorialogs.service \
+             vexor-log-alerts-evaluator.service vexor-perfdata-collector.timer; do
+        if ! systemctl is-enabled "$u" >/dev/null 2>&1; then
+            echo "[vexor-firstboot] enabling $u"
+            systemctl enable "$u" >/dev/null 2>&1 || true
+            changed=1
+        fi
+        systemctl is-active "$u" >/dev/null 2>&1 || systemctl start "$u" >/dev/null 2>&1 || true
+    done
+
+    if [ "$changed" = "1" ]; then
+        systemctl restart vexor-vector.service >/dev/null 2>&1 || true
+    fi
+}
+
 # --- Provision the public-demo account + login hint (VEXOR_DEMO_MODE only) -----
 # The Keycloak realm lives in Postgres (persisted volume), but a forced realm
 # reseed drops the read-only `demo` user and the login-page credential hint.
@@ -220,6 +272,7 @@ harden_network_failfast
 ensure_runtime_env
 ensure_keycloak_db
 ensure_naemon_configs
+ensure_log_pipeline
 ensure_demo_account
 
 # --- Register the operator's external URL with Keycloak ----------------------
