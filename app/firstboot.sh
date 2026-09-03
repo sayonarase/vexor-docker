@@ -59,6 +59,14 @@ ensure_runtime_env() {
         tr -dc 'A-Za-z0-9' </dev/urandom | head -c48 > "$SKF" || true
         chmod 640 "$SKF"; chgrp vexor "$SKF" 2>/dev/null || true
     fi
+    # Local-account JWT signing secret. /etc/vexor is a volume, so the RPM's
+    # %post (which ran at image build time) cannot be relied on -- without this
+    # every local login 500s because vexor may not write to /etc/vexor.
+    local LJS=/etc/vexor/local-jwt.secret
+    if [ ! -s "$LJS" ]; then
+        tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c64 > "$LJS" || true
+        chmod 640 "$LJS"; chgrp vexor "$LJS" 2>/dev/null || true
+    fi
     local SK; SK=$(cat "$SKF")
     local PUB; PUB=$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^VEXOR_PUBLIC_URL=//p' | head -1) || true
     local CORS="${PUB:-https://localhost}"; CORS="${CORS%/}"
