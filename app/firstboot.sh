@@ -12,7 +12,7 @@ set -euo pipefail
 export HOME="${HOME:-/root}"
 
 # --- Make optional package-install steps fail fast on locked-down hosts -------
-# Demo hosts often block external package mirrors (EPEL, InfluxData, Rocky).
+# Demo hosts often block external package mirrors (EPEL, Rocky).
 # vexor-setup runs optional `dnf install` / `pip install` steps (polkit,
 # nagios-plugins, impacket, jsonpath-ng) that would otherwise hang for minutes
 # on metadata/PyPI timeouts before their `|| true` fallbacks kick in. Disable

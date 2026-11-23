@@ -20,7 +20,7 @@ One image runs the whole stack (same components as the Rocky 10 install):
 | `naemon` | Monitoring engine |
 | `keycloak` (java-21) | Authentication / OIDC (LDAP/AD connect) |
 | `mariadb` | Config, state, SLA data |
-| `influxdb2` | Performance data / graphs |
+| `vexor-victoriametrics` | Performance data / graphs (VictoriaMetrics, under `/var/lib/vexor`) |
 | `valkey` | Cache / sessions |
 
 The components are installed by the `vexor-server` meta package and managed by
@@ -90,7 +90,7 @@ rate limits; ghcr.io does not.)
   same private network as a self-hosted repo that relies on hairpin NAT, you may
   need an `/etc/hosts` entry mapping the repo hostname to its internal IP. Builds
   from the internet (e.g. GitHub Actions) and plain image pulls are unaffected.
-- **Data persistence:** MariaDB, InfluxDB, Naemon, `/etc/vexor` (incl. license)
+- **Data persistence:** MariaDB, Naemon, performance data (`/var/lib/vexor`), `/etc/vexor` (incl. license)
   and Keycloak data are stored in named volumes; recreating the container keeps
   your data and skips the first-boot setup.
 

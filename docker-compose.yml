@@ -34,7 +34,6 @@ services:
       - "443:443"
     volumes:
       - mysql:/var/lib/mysql
-      - influxdb:/var/lib/influxdb
       - naemon:/var/lib/naemon
       - vexor:/var/lib/vexor
       - vexoretc:/etc/vexor
@@ -44,7 +43,6 @@ services:
 
 volumes:
   mysql:
-  influxdb:
   naemon:
   vexor:
   vexoretc:

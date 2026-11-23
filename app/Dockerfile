@@ -7,7 +7,7 @@
 #
 # Stack pulled in by the `vexor-server` meta package:
 #   vexor-api, vexor-ui, vexor-naemon, vexor-keycloak, vexor-logs,
-#   nginx, mariadb-server, influxdb2, java-21-openjdk-headless  (+ valkey below)
+#   nginx, mariadb-server, vexor-victoriametrics, java-21-openjdk-headless  (+ valkey below)
 FROM quay.io/rockylinux/rockylinux:10
 
 # systemd-as-PID-1 plumbing
@@ -47,7 +47,7 @@ RUN sed -i '/location \/auth\//,/^    }/{ \
 # RPM %post presets are skipped for the same reason — so we wire the wants
 # symlinks up by hand. All these units are WantedBy=multi-user.target.
 RUN mkdir -p /etc/systemd/system/multi-user.target.wants \
- && for u in mariadb postgresql influxdb valkey keycloak nginx naemon vexor-api vexor-vector vexor-victorialogs; do \
+ && for u in mariadb postgresql vexor-victoriametrics valkey keycloak nginx naemon vexor-api vexor-tsdb-migrate vexor-vector vexor-victorialogs; do \
       if [ -f "/usr/lib/systemd/system/$u.service" ]; then \
         ln -sf "/usr/lib/systemd/system/$u.service" \
                "/etc/systemd/system/multi-user.target.wants/$u.service"; \
@@ -87,7 +87,7 @@ RUN systemctl mask \
 
 EXPOSE 80 443
 # Persist state across container re-creation (see docker-compose.yml).
-VOLUME ["/var/lib/mysql", "/var/lib/influxdb", "/var/lib/naemon", \
+VOLUME ["/var/lib/mysql", "/var/lib/naemon", \
         "/var/lib/vexor", "/etc/vexor", "/opt/keycloak/data"]
 
 # Readiness probe: vexor-api /healthz returns 503 when the database is down.
